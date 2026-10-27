@@ -21,6 +21,9 @@ export const auth = {
     hasAccount: 'Уже есть аккаунт?',
     signIn: 'Войти',
     error: 'Не удалось зарегистрироваться.',
+    // Tofu: shown while DISABLE_SIGNUP is true (lib/signup.ts).
+    closedTitle: 'Регистрация закрыта',
+    closed: 'Войти могут только те, у кого уже есть аккаунт в этом GymCoach.',
   },
   logout: 'Выйти',
   logoutFailed: 'Не удалось выйти. Вы всё ещё в системе; повторите попытку.',

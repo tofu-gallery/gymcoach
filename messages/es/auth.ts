@@ -21,6 +21,9 @@ export const auth = {
     hasAccount: '¿Ya tienes una cuenta?',
     signIn: 'Iniciar sesión',
     error: 'Error al crear la cuenta.',
+    // Tofu: shown while DISABLE_SIGNUP is true (lib/signup.ts).
+    closedTitle: 'El registro está cerrado',
+    closed: 'Solo pueden iniciar sesión quienes ya tienen una cuenta en este GymCoach.',
   },
   logout: 'Cerrar sesión',
   logoutFailed: 'No se pudo cerrar la sesión. Tu sesión sigue abierta; inténtalo de nuevo.',

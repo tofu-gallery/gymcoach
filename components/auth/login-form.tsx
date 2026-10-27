@@ -28,7 +28,9 @@ const demoEmail = process.env.NEXT_PUBLIC_DEMO_EMAIL ?? '';
 const demoPassword = process.env.NEXT_PUBLIC_DEMO_PASSWORD ?? '';
 const showDemo = demoMode && demoEmail !== '' && demoPassword !== '';
 
-export function LoginForm() {
+// Tofu: `signupOpen` is false while DISABLE_SIGNUP is true (lib/signup.ts),
+// which hides the link to the sign-up page.
+export function LoginForm({ signupOpen = true }: { signupOpen?: boolean } = {}) {
   const t = useTranslations('auth');
   const common = useTranslations('common');
   const router = useRouter();
@@ -149,15 +151,17 @@ export function LoginForm() {
             {isSubmitting ? t('login.submitting') : t('login.submit')}
           </Button>
 
-          <p className="text-center text-sm text-muted-foreground">
-            {t('login.noAccount')}{' '}
-            <Link
-              href="/signup"
-              className="font-medium text-foreground underline-offset-4 hover:underline"
-            >
-              {t('login.createAccount')}
-            </Link>
-          </p>
+          {signupOpen && (
+            <p className="text-center text-sm text-muted-foreground">
+              {t('login.noAccount')}{' '}
+              <Link
+                href="/signup"
+                className="font-medium text-foreground underline-offset-4 hover:underline"
+              >
+                {t('login.createAccount')}
+              </Link>
+            </p>
+          )}
         </form>
       </CardContent>
     </Card>

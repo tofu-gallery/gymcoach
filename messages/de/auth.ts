@@ -21,6 +21,9 @@ export const auth = {
     hasAccount: 'Bereits ein Account?',
     signIn: 'Anmelden',
     error: 'Registrierungsfehler.',
+    // Tofu: shown while DISABLE_SIGNUP is true (lib/signup.ts).
+    closedTitle: 'Die Registrierung ist geschlossen',
+    closed: 'Nur wer bereits ein Konto bei diesem GymCoach hat, kann sich anmelden.',
   },
   logout: 'Abmelden',
   logoutFailed: 'Abmeldung fehlgeschlagen. Du bist weiterhin angemeldet; versuche es erneut, wenn du online bist.',

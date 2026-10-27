@@ -18,6 +18,9 @@ export const auth = {
     hasAccount: 'Already have an account?',
     signIn: 'Sign in',
     error: 'Registration error.',
+    // Tofu: shown while DISABLE_SIGNUP is true (lib/signup.ts).
+    closedTitle: 'Sign-up is closed',
+    closed: 'Only people who already have an account on this GymCoach can sign in.',
   },
   logout: 'Log out',
   logoutFailed: 'Could not log out. You are still signed in; try again.',

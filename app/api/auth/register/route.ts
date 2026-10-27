@@ -7,11 +7,21 @@ import { registerSchema } from '@/lib/schemas/auth';
 import { seedExerciseCatalog } from '@/lib/exercise-catalog';
 import { rateLimit, clientIp } from '@/lib/rate-limit';
 import { ApiError, readJsonWithCap, SMALL_JSON_BODY_MAX_BYTES } from '@/lib/api';
+import { signupClosed } from '@/lib/signup';
 
 // POST /api/auth/register: creates an account, seeds the default exercise
 // catalog for it, and signs the user in. Public route (see middleware).
+// Tofu: refused with 403 while DISABLE_SIGNUP is true (lib/signup.ts, TOFU.md).
 export async function POST(req: Request) {
   try {
+    if (signupClosed()) {
+      return NextResponse.json(
+        { error: 'Sign-up is closed: only people who already have an account on this GymCoach can sign in.' },
+        { status: 403 },
+      );
+    }
+
+
     const rl = rateLimit(`register:${clientIp(req)}`, 5, 60_000);
     if (!rl.ok) {
       return NextResponse.json(
