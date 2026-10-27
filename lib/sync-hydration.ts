@@ -1,6 +1,6 @@
 // Hydrates IndexedDB with the sets fetched from the server.
-// Idempotent: uses localId = "srv_${serverId}" as the primary key,
-// so re-running the function does not create duplicates.
+// Tofu: reconcile by serverId as well as localId, so a locally logged set
+// and its server snapshot are one row. Preserve unsent edits while hydrating.
 //
 // Strategy: on every SessionRunner mount, we call hydrate with the
 // server-side sets. IndexedDB thus becomes the single source of truth
@@ -45,14 +45,37 @@ export async function hydrateFromServerSets(
     attempts: 0,
     lastError: null,
   }));
-  // bulkPut is idempotent by localId.
-  await db.pendingSets.bulkPut(records);
-  // A row tagged with another account is left as is: it cannot belong to this
-  // session, and rewriting it would hand that account's work to this one.
-  await db.pendingSets
-    .where('sessionId')
-    .equals(sessionId)
-    .modify((row) => {
+  // One write transaction prevents a completing sync or local edit from
+  // landing between the reconciliation read and write.
+  await db.transaction('rw', db.pendingSets, async () => {
+    const local = await db.pendingSets.where('sessionId').equals(sessionId).toArray();
+    const mine = local.filter((row) => row.userId === userId || row.userId === undefined);
+    const reconciled: PendingSet[] = [];
+    const duplicates: string[] = [];
+    for (const record of records) {
+      const matches = mine.filter((row) => row.serverId === record.serverId);
+      // Prefer unsent work, then the original local identity. A server
+      // snapshot must not replace a newer edit that is still in the queue.
+      matches.sort((a, b) =>
+        Number(a.status === 'synced') - Number(b.status === 'synced') ||
+        Number(a.localId.startsWith('srv_')) - Number(b.localId.startsWith('srv_')),
+      );
+      const existing = matches[0];
+      if (!existing) {
+        // Do not overwrite a row explicitly owned by a different account.
+        if (!local.some((row) => row.localId === record.localId)) reconciled.push(record);
+        continue;
+      }
+      reconciled.push(existing.status === 'synced'
+        ? { ...existing, ...record, localId: existing.localId }
+        : { ...existing, userId });
+      duplicates.push(...matches.slice(1).filter((row) => row.status === 'synced').map((row) => row.localId));
+    }
+    await db.pendingSets.bulkDelete(duplicates);
+    await db.pendingSets.bulkPut(reconciled);
+    // Only this session's owner can claim its untagged legacy rows.
+    await db.pendingSets.where('sessionId').equals(sessionId).modify((row) => {
       if (row.userId === undefined) row.userId = userId;
     });
+  });
 }

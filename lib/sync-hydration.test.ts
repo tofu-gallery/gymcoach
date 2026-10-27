@@ -1,3 +1,4 @@
+// Tofu: regressions for local/server reconciliation after a workout is reopened.
 import { describe, expect, it, vi } from 'vitest';
 import type { PendingSet } from '@/lib/indexeddb';
 import type { Set as PrismaSet } from '@/lib/prisma-client';
@@ -14,8 +15,7 @@ import { hydrateFromServerSets } from '@/lib/sync-hydration';
 // The rows behind `bulkPut` and `where('sessionId').equals(...).modify(...)`,
 // the two calls the hydration makes, keyed by localId like the real table.
 function rowsDB(rows: PendingSet[]) {
-  return {
-    pendingSets: {
+  const pendingSets = {
       bulkPut: vi.fn(async (records: PendingSet[]) => {
         for (const record of records) {
           const at = rows.findIndex((row) => row.localId === record.localId);
@@ -23,8 +23,14 @@ function rowsDB(rows: PendingSet[]) {
           else rows.push(record);
         }
       }),
+      bulkDelete: vi.fn(async (ids: string[]) => {
+        for (let i = rows.length - 1; i >= 0; i -= 1) {
+          if (ids.includes(rows[i]!.localId)) rows.splice(i, 1);
+        }
+      }),
       where: vi.fn((index: string) => ({
         equals: vi.fn((value: string) => ({
+          toArray: vi.fn(async () => rows.filter((row) => row[index as keyof PendingSet] === value)),
           modify: vi.fn(async (change: (row: PendingSet) => void) => {
             const matching = rows.filter((row) => row[index as keyof PendingSet] === value);
             for (const row of matching) change(row);
@@ -32,7 +38,10 @@ function rowsDB(rows: PendingSet[]) {
           }),
         })),
       })),
-    },
+  };
+  return {
+    pendingSets,
+    transaction: vi.fn(<T>(_mode: string, _scope: unknown, body: () => Promise<T>) => body()),
   };
 }
 
@@ -76,6 +85,34 @@ const serverSet = {
 } as unknown as PrismaSet;
 
 describe('hydrateFromServerSets ownership (#490)', () => {
+  it('keeps one row when a locally logged set is returned by the server', async () => {
+    const local = { ...queued('local-1', 'session-a', 'user-a'), serverId: 'set-1', status: 'synced' as const };
+    const rows = [local];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+    await hydrateFromServerSets('session-a', [serverSet], 'user-a');
+    await hydrateFromServerSets('session-a', [serverSet], 'user-a');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ localId: 'local-1', serverId: 'set-1', status: 'synced' });
+  });
+
+  it('removes an old duplicate without overwriting a queued local edit or its notice', async () => {
+    const local = { ...queued('local-1', 'session-a', 'user-a'), serverId: 'set-1', weight: 75, equipmentDroppedNotice: 'machine-1' };
+    const rows = [local, { ...local, localId: 'srv_set-1', status: 'synced' as const, weight: 60 }];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+    await hydrateFromServerSets('session-a', [serverSet], 'user-a');
+    expect(rows).toEqual([local]);
+    expect(rows[0]).toMatchObject({ weight: 75, status: 'pending', equipmentDroppedNotice: 'machine-1' });
+  });
+
+  it('does not replace an edit made to a server-hydrated row with an older server snapshot', async () => {
+    const local = { ...queued('srv_set-1', 'session-a', 'user-a'), serverId: 'set-1', weight: 75 };
+    const rows = [local];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+    await hydrateFromServerSets('session-a', [serverSet], 'user-a');
+    expect(rows).toEqual([local]);
+    expect(rows[0]).toMatchObject({ weight: 75, status: 'pending' });
+  });
+
   it("tags the server rows with the session's owner", async () => {
     const rows: PendingSet[] = [];
     mockGetDB.mockReturnValue(rowsDB(rows));
