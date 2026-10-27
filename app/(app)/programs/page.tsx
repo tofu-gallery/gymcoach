@@ -24,14 +24,15 @@ export default async function ProgramsPage() {
   return (
     <main className="flex-1 px-4 py-6">
       <div className="mx-auto flex max-w-3xl flex-col gap-6">
-        <div className="flex items-center justify-between gap-3">
+        {/* Tofu: the row wraps, so on a phone the two buttons move under the title instead of past the screen's edge. */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold tracking-tight">{t('title')}</h1>
             <p className="text-sm text-muted-foreground">
               {t('count', { count: programs.length })}
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button asChild variant="outline" className="min-h-tap">
               <Link href="/programs/generate">
                 <Wand2 className="size-4" />

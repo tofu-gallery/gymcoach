@@ -397,7 +397,8 @@ export function ImportSection() {
         </p>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <div className="flex items-end gap-2">
+        {/* Tofu: the row wraps, so on a phone the file button moves to its own line instead of past the screen's edge. */}
+        <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
             <Label htmlFor="import-format">{t('source')}</Label>
             <Select value={format} onValueChange={(v) => switchFormat(v as ImportFormat)}>
