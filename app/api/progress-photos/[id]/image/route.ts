@@ -26,7 +26,10 @@ export async function GET(_req: Request, props: Params) {
       throw new ApiError(404, 'Photo not found.');
     }
 
-    const bytes = await readPhotoFile(photo.storagePath);
+    // Tofu: a photo kept in the database is served from imageData; one
+    // uploaded before still comes from its file (see TOFU.md).
+    const bytes =
+      photo.imageData ?? (photo.storagePath ? await readPhotoFile(photo.storagePath) : null);
     if (!bytes) {
       // Row exists but the file is gone from disk (operator moved/lost the
       // uploads dir): a clean 404, not a 500.

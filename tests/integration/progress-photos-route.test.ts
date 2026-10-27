@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
-import { mkdtemp, rm, stat, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -10,6 +10,9 @@ import { getCurrentUserId } from '@/lib/auth';
 // suite covers the hostile paths (oversize, wrong/disguised type, bad
 // metadata) and the ownership boundary (a user can never read or delete
 // another user's photo) on top of the happy paths.
+// Tofu: new photos are kept in the database (ProgressPhoto.imageData) rather
+// than under UPLOADS_DIR, so the happy paths check the row; rows made the old
+// way (a storagePath and a file) are seeded directly (see TOFU.md).
 
 // Auth is read through getCurrentUserId (via requireApiUserId in @/lib/api).
 vi.mock('@/lib/auth', () => ({ getCurrentUserId: vi.fn() }));
@@ -83,14 +86,28 @@ async function seedUsers() {
   return { a, b };
 }
 
+// A photo stored the way upstream stores it: a row naming a file under
+// UPLOADS_DIR, written here when `bytes` is given.
+async function seedFilePhoto(userId: string, bytes?: Uint8Array<ArrayBuffer>) {
+  const row = await db.progressPhoto.create({
+    data: { userId, storagePath: `${userId}/old.jpg`, mimeType: 'image/jpeg', byteSize: 36 },
+  });
+  const abs = path.join(uploadsDir, 'progress-photos', userId, 'old.jpg');
+  if (bytes) {
+    await mkdir(path.dirname(abs), { recursive: true });
+    await writeFile(abs, bytes);
+  }
+  return { row, abs };
+}
+
 describe('POST /api/progress-photos - valid uploads', () => {
   it.each([
-    ['JPEG', jpegBytes(), 'image/jpeg', 'jpg'],
-    ['PNG', pngBytes(), 'image/png', 'png'],
-    ['WebP', webpBytes(), 'image/webp', 'webp'],
+    ['JPEG', jpegBytes(), 'image/jpeg'],
+    ['PNG', pngBytes(), 'image/png'],
+    ['WebP', webpBytes(), 'image/webp'],
   ] as const)(
-    'accepts a %s upload: 201, row persisted, file on disk',
-    async (_label, bytes, mime, ext) => {
+    'accepts a %s upload: 201, row persisted with its bytes, no file on disk',
+    async (_label, bytes, mime) => {
       const { a } = await seedUsers();
       actAs(a.id);
 
@@ -99,21 +116,17 @@ describe('POST /api/progress-photos - valid uploads', () => {
       const body = await res.json();
       expect(body.mimeType).toBe(mime);
       expect(body.byteSize).toBe(bytes.length);
-      // The server filesystem layout never leaks to the client.
+      // The storage details never leak to the client.
       expect(body.storagePath).toBeUndefined();
+      expect(body.imageData).toBeUndefined();
 
       const row = await db.progressPhoto.findUnique({ where: { id: body.id } });
       expect(row).not.toBeNull();
       expect(row!.userId).toBe(a.id);
       expect(row!.mimeType).toBe(mime);
-      expect(row!.storagePath).toBe(`${a.id}/${body.id}.${ext}`);
-
-      const abs = path.join(uploadsDir, 'progress-photos', row!.storagePath);
-      expect(existsSync(abs)).toBe(true);
-      expect(new Uint8Array(await readFile(abs))).toEqual(bytes);
-      // Written non-executable, owner-only (0o600).
-      const mode = (await stat(abs)).mode & 0o777;
-      expect(mode).toBe(0o600);
+      expect(row!.storagePath).toBeNull();
+      expect(new Uint8Array(row!.imageData!)).toEqual(bytes);
+      expect(existsSync(path.join(uploadsDir, 'progress-photos', a.id))).toBe(false);
     },
   );
 
@@ -274,7 +287,7 @@ describe('GET /api/progress-photos/[id]/image - ownership-scoped serving', () =>
     expect(res.status).toBe(404);
   });
 
-  it('answers 404 for a missing id and for a row whose file is gone from disk', async () => {
+  it('answers 404 for a missing id and for a file-backed row whose file is gone from disk', async () => {
     const { a } = await seedUsers();
     actAs(a.id);
 
@@ -284,25 +297,34 @@ describe('GET /api/progress-photos/[id]/image - ownership-scoped serving', () =>
     );
     expect(missing.status).toBe(404);
 
-    const { id } = await (await uploadPhoto(uploadReq(jpegBytes()))).json();
-    const row = await db.progressPhoto.findUnique({ where: { id } });
-    await rm(path.join(uploadsDir, 'progress-photos', row!.storagePath));
+    const { row } = await seedFilePhoto(a.id);
     const gone = await getImage(
-      new Request(`http://test.local/api/progress-photos/${id}/image`),
-      idParams(id),
+      new Request(`http://test.local/api/progress-photos/${row.id}/image`),
+      idParams(row.id),
     );
     expect(gone.status).toBe(404);
+  });
+
+  it('still serves a photo stored as a file before photos moved to the database', async () => {
+    const { a } = await seedUsers();
+    actAs(a.id);
+    const bytes = jpegBytes();
+    const { row } = await seedFilePhoto(a.id, bytes);
+
+    const res = await getImage(
+      new Request(`http://test.local/api/progress-photos/${row.id}/image`),
+      idParams(row.id),
+    );
+    expect(res.status).toBe(200);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
   });
 });
 
 describe('DELETE /api/progress-photos/[id] - ownership-scoped delete', () => {
-  it('lets the owner delete a photo: row and file both removed', async () => {
+  it('lets the owner delete a photo: the row and its bytes are removed', async () => {
     const { a } = await seedUsers();
     actAs(a.id);
     const { id } = await (await uploadPhoto(uploadReq(jpegBytes()))).json();
-    const row = await db.progressPhoto.findUnique({ where: { id } });
-    const abs = path.join(uploadsDir, 'progress-photos', row!.storagePath);
-    expect(existsSync(abs)).toBe(true);
 
     const res = await deletePhoto(
       new Request('http://test.local', { method: 'DELETE' }),
@@ -310,15 +332,27 @@ describe('DELETE /api/progress-photos/[id] - ownership-scoped delete', () => {
     );
     expect(res.status).toBe(200);
     expect(await db.progressPhoto.findUnique({ where: { id } })).toBeNull();
+  });
+
+  it('removes the file of a photo stored as a file', async () => {
+    const { a } = await seedUsers();
+    actAs(a.id);
+    const { row, abs } = await seedFilePhoto(a.id, jpegBytes());
+    expect(existsSync(abs)).toBe(true);
+
+    const res = await deletePhoto(
+      new Request('http://test.local', { method: 'DELETE' }),
+      idParams(row.id),
+    );
+    expect(res.status).toBe(200);
+    expect(await db.progressPhoto.findUnique({ where: { id: row.id } })).toBeNull();
     expect(existsSync(abs)).toBe(false);
   });
 
-  it("answers 404 and keeps row + file when user B deletes user A's photo", async () => {
+  it("answers 404 and keeps the row when user B deletes user A's photo", async () => {
     const { a, b } = await seedUsers();
     actAs(a.id);
     const { id } = await (await uploadPhoto(uploadReq(jpegBytes()))).json();
-    const row = await db.progressPhoto.findUnique({ where: { id } });
-    const abs = path.join(uploadsDir, 'progress-photos', row!.storagePath);
 
     actAs(b.id);
     const res = await deletePhoto(
@@ -327,15 +361,13 @@ describe('DELETE /api/progress-photos/[id] - ownership-scoped delete', () => {
     );
     expect(res.status).toBe(404);
     expect(await db.progressPhoto.findUnique({ where: { id } })).not.toBeNull();
-    expect(existsSync(abs)).toBe(true);
   });
 
-  it('still deletes the row when the file is already gone from disk', async () => {
+  it('still deletes a file-backed row when the file is already gone from disk', async () => {
     const { a } = await seedUsers();
     actAs(a.id);
-    const { id } = await (await uploadPhoto(uploadReq(jpegBytes()))).json();
-    const row = await db.progressPhoto.findUnique({ where: { id } });
-    await rm(path.join(uploadsDir, 'progress-photos', row!.storagePath));
+    const { row } = await seedFilePhoto(a.id);
+    const id = row.id;
 
     const res = await deletePhoto(
       new Request('http://test.local', { method: 'DELETE' }),

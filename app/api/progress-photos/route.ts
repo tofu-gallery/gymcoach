@@ -7,18 +7,18 @@ import {
   readBodyBytesWithCap,
   requireApiUserId,
 } from '@/lib/api';
-import {
-  deletePhotoFile,
-  MAX_PROGRESS_PHOTO_BYTES,
-  photoRelativePath,
-  sniffImageType,
-  writePhotoFile,
-} from '@/lib/progress-photo';
+import { MAX_PROGRESS_PHOTO_BYTES, sniffImageType } from '@/lib/progress-photo';
 import { progressPhotoUploadQuerySchema } from '@/lib/schemas/progress-photo';
 
+// Tofu: a new photo's bytes are stored in the database (ProgressPhoto.imageData)
+// instead of a file under UPLOADS_DIR, because Tofu's hosting keeps no files
+// between requests; the browser shrinks the photo before sending it (see
+// TOFU.md). Photos uploaded before are still read from their file.
+
 // Metadata the API exposes about a photo. storagePath (server filesystem
-// layout) and the bytes themselves are deliberately never returned here; the
-// bytes are only served by the ownership-scoped image route.
+// layout) and the bytes themselves (imageData) are deliberately never returned
+// or even read here; the bytes are only served by the ownership-scoped image
+// route.
 const PHOTO_SELECT = {
   id: true,
   takenAt: true,
@@ -48,10 +48,8 @@ export async function GET() {
 // Security controls (issue #269):
 // - The accepted type is decided by magic-byte sniffing over a jpeg/png/webp
 //   allowlist; the client Content-Type header is ignored entirely.
-// - The row is always created under the authenticated user; the file lands
-//   under a per-user dir inside the gitignored uploads dir, mode 0o600.
-// - If the DB write fails after the file was written, the file is removed
-//   again so no orphan bytes accumulate on disk.
+// - The row is always created under the authenticated user, with the bytes
+//   in the row itself (Tofu: no file is written, so none can be orphaned).
 export async function POST(req: Request) {
   try {
     const userId = await requireApiUserId();
@@ -78,30 +76,22 @@ export async function POST(req: Request) {
       throw new ApiError(415, 'Unsupported image type. Use JPEG, PNG or WebP.');
     }
 
-    // The id doubles as the filename, so it is generated up front. cuid ids
-    // and UUIDs coexist fine in the TEXT primary key column.
+    // cuid ids and UUIDs coexist fine in the TEXT primary key column.
     const id = randomUUID();
-    const storagePath = photoRelativePath(userId, id, mime);
-    await writePhotoFile(storagePath, bytes);
-    try {
-      const photo = await db.progressPhoto.create({
-        data: {
-          id,
-          userId,
-          ...(takenAt ? { takenAt: new Date(takenAt) } : {}),
-          storagePath,
-          mimeType: mime,
-          byteSize: bytes.length,
-          note: note ? note : null,
-        },
-        select: PHOTO_SELECT,
-      });
-      return NextResponse.json(photo, { status: 201 });
-    } catch (err) {
-      // The file was written but the row was not: remove the orphan file.
-      await deletePhotoFile(storagePath).catch(() => {});
-      throw err;
-    }
+    const photo = await db.progressPhoto.create({
+      data: {
+        id,
+        userId,
+        ...(takenAt ? { takenAt: new Date(takenAt) } : {}),
+        storagePath: null,
+        imageData: bytes,
+        mimeType: mime,
+        byteSize: bytes.length,
+        note: note ? note : null,
+      },
+      select: PHOTO_SELECT,
+    });
+    return NextResponse.json(photo, { status: 201 });
   } catch (err) {
     return handleApiError(err);
   }

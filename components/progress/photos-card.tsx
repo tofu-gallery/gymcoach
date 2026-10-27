@@ -34,8 +34,44 @@ function imageUrl(id: string) {
   return `/api/progress-photos/${id}/image`;
 }
 
-// Progress-photos card (issue #269): upload a photo (stored locally on the
-// server, served only to its owner), browse the gallery, delete, and compare
+// Tofu: photos are kept in the app's database, so each one is shrunk in the
+// browser before it is sent: at most PHOTO_MAX_EDGE pixels on its long side,
+// re-encoded as JPEG (which also drops the camera's metadata, such as where it
+// was taken). Anything the browser cannot decode is sent as it is, and the
+// server still checks its type and size (see TOFU.md).
+const PHOTO_MAX_EDGE = 1600;
+const PHOTO_JPEG_QUALITY = 0.85;
+
+async function shrinkPhoto(file: File): Promise<Blob> {
+  try {
+    const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale));
+    const height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) {
+      bitmap.close();
+      return file;
+    }
+    context.fillStyle = '#ffffff';
+    context.fillRect(0, 0, width, height);
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', PHOTO_JPEG_QUALITY),
+    );
+    if (!blob) return file;
+    return scale < 1 || blob.size < file.size ? blob : file;
+  } catch {
+    return file;
+  }
+}
+
+// Progress-photos card (issue #269): upload a photo (Tofu: kept in the app's
+// database, served only to its owner), browse the gallery, delete, and compare
 // two photos side by side to see visual progress.
 export function PhotosCard({ photos }: Props) {
   const router = useRouter();
@@ -70,10 +106,11 @@ export function PhotosCard({ photos }: Props) {
       const query = queryString ? `?${queryString}` : '';
       // Raw bytes as the body (not multipart): the server caps the size while
       // reading and decides the real type from the magic bytes.
+      const body = await shrinkPhoto(file);
       const res = await fetch(`/api/progress-photos${query}`, {
         method: 'POST',
-        headers: { 'Content-Type': file.type || 'application/octet-stream' },
-        body: file,
+        headers: { 'Content-Type': body.type || 'application/octet-stream' },
+        body,
       });
       if (!res.ok) {
         const data = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -161,7 +198,7 @@ export function PhotosCard({ photos }: Props) {
 
         {photos.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No progress photos yet. Photos are stored locally on your server
+            No progress photos yet. Photos are kept in this app&apos;s database
             and only visible to you. Upload the first one to start the timeline.
           </p>
         ) : (

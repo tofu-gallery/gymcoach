@@ -516,6 +516,9 @@ enum BodyMeasurementSite {
 // only this row's storagePath points at them; every read goes through an
 // ownership-scoped API route. mimeType is the SNIFFED type (magic bytes, an
 // allowlist of jpeg/png/webp), never the client-declared one.
+// Tofu: new photos keep their bytes in imageData, in the database, because
+// Tofu's hosting keeps no files between requests (see TOFU.md); storagePath is
+// null for them and only names the file of a photo uploaded before.
 model ProgressPhoto {
   id          String   @id @default(cuid())
   userId      String
@@ -523,7 +526,8 @@ model ProgressPhoto {
   takenAt     DateTime @default(now())
   // Path of the image file RELATIVE to the progress-photo storage dir
   // (<userId>/<photoId>.<ext>), so a relocated UPLOADS_DIR keeps working.
-  storagePath String
+  storagePath String?
+  imageData   Bytes?
   mimeType    String
   byteSize    Int
   note        String?

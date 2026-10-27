@@ -7,7 +7,8 @@ interface Params {
   params: Promise<{ id: string }>;
 }
 
-// DELETE /api/progress-photos/[id] : remove one photo (row + file).
+// DELETE /api/progress-photos/[id] : remove one photo (row, and its file when
+// it has one: Tofu keeps new photos in the row alone).
 // Ownership-scoped: a photo that does not exist and a photo owned by another
 // user both answer 404, so the route leaks no existence information. The file
 // is unlinked BEFORE the row (issue #282): a missing file is tolerated, but any
@@ -18,14 +19,17 @@ export async function DELETE(_req: Request, props: Params) {
   try {
     const userId = await requireApiUserId();
     // Ownership lives in the query scope itself (issue #317).
+    // Tofu: the bytes are not read here; a photo kept in the database has no
+    // file to remove (storagePath is null), see TOFU.md.
     const photo = await db.progressPhoto.findFirst({
       where: { id: params.id, userId },
+      select: { id: true, storagePath: true },
     });
     if (!photo) {
       throw new ApiError(404, 'Photo not found.');
     }
 
-    await deletePhotoFile(photo.storagePath);
+    if (photo.storagePath) await deletePhotoFile(photo.storagePath);
     await db.progressPhoto.delete({ where: { id: photo.id, userId } });
     return NextResponse.json({ ok: true });
   } catch (err) {
