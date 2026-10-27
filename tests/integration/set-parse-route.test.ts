@@ -73,6 +73,32 @@ describe('POST /api/sets/parse (issue #210)', () => {
     expect(body.parsed.durationSec).toBe(1500);
   });
 
+  // Tofu: with no AI key saved, the route says which key the owner adds.
+  it('answers 503 naming the key the owner adds when no AI key is saved', async () => {
+    const { a, bench } = await seed();
+    actAs(a.id);
+    const saved = {
+      LLM_PROVIDER: process.env.LLM_PROVIDER,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+    };
+    delete process.env.LLM_PROVIDER;
+    delete process.env.ANTHROPIC_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+    try {
+      const res = await parseSet(jsonReq({ exerciseId: bench.id, text: '100 for 8' }));
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body).toMatchObject({ keyMissing: true, variable: 'ANTHROPIC_API_KEY' });
+      expect(body.error).toMatch(/^The owner of this GymCoach turns on the AI features/);
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it('returns parsed: null (not an error) when the model cannot parse', async () => {
     const { a, bench } = await seed();
     actAs(a.id);

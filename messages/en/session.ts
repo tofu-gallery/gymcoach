@@ -100,6 +100,7 @@ export const session = {
     parse: 'Parse with AI',
     parseHelp: 'Fills the fields below for review; it never logs a set automatically.',
     parseError: 'Could not parse that. Try the shorthand (e.g. 100x8@9).',
+    parseKeyMissing: 'The owner of this GymCoach turns on “Parse with AI” by adding {variable} to the app’s settings, as a hidden value. The shorthand (e.g. 100x8@9) works without it.', // Tofu: the owner adds the key (TOFU.md)
     duration: 'Duration (mm:ss)',
     durationExample: 'e.g. 12:30 or 12.30',
     durationError:

@@ -103,6 +103,7 @@ export const session = {
     parse: 'Mit AI analysieren',
     parseHelp: 'Füllt die Felder unten zur Überprüfung; es loggt niemals automatisch einen Satz.',
     parseError: 'Konnte das nicht analysieren. Versuch die Kurzform (z.B. 100x8@9).',
+    parseKeyMissing: 'Um „Mit AI analysieren“ zu aktivieren, muss der Betreiber dieses GymCoach {variable} als verborgenen Wert in den Einstellungen der App hinterlegen. Die Kurzform (z.B. 100x8@9) funktioniert trotzdem.', // Tofu: the owner adds the key (TOFU.md)
     duration: 'Dauer (mm:ss)',
     durationExample: 'z.B. 12:30 oder 12.30',
     durationError:

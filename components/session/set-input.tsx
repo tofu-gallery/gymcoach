@@ -209,7 +209,16 @@ export function SetInput({
         body: JSON.stringify({ exerciseId: programExercise.exercise.id, text }),
       });
       if (!res.ok) {
-        setAiHint(t('parseError'));
+        // Tofu: no AI key saved: say which key the owner adds (TOFU.md).
+        const j = (await res.json().catch(() => ({}))) as {
+          keyMissing?: boolean;
+          variable?: string;
+        };
+        setAiHint(
+          j.keyMissing && j.variable
+            ? t('parseKeyMissing', { variable: j.variable })
+            : t('parseError'),
+        );
         return;
       }
       const data = (await res.json()) as { parsed: ParsedSetFill | null };

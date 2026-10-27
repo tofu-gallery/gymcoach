@@ -399,6 +399,27 @@ describe('SetInput AI parse', () => {
     expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ weight: 0, reps: 8, rir: 2 }));
   });
 
+  // Tofu: with no AI key saved, the hint names the key the owner adds (TOFU.md).
+  it('says which key the owner adds when no AI key is saved', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: async () => ({ keyMissing: true, variable: 'ANTHROPIC_API_KEY' }),
+      }),
+    );
+    renderSetInput('KG');
+
+    await user.type(screen.getByLabelText(/describe the set/i), '100 for 8');
+    await user.click(screen.getByRole('button', { name: /parse with ai/i }));
+
+    expect(
+      screen.getByText(/the owner of this gymcoach turns on .parse with ai. by adding anthropic_api_key/i),
+    ).toBeInTheDocument();
+  });
+
   it('submits the selected physical gym equipment', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);

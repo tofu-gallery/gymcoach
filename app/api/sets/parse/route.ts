@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
+import { getLlmProvider, missingKeyMessage } from '@/lib/llm';
 import { rateLimit } from '@/lib/rate-limit';
 import { aiParseSet } from '@/lib/set-parse';
 
@@ -44,6 +45,21 @@ export async function POST(req: Request) {
     ]);
     if (!exercise) {
       throw new ApiError(404, 'Exercise not found.');
+    }
+
+    // Tofu: with no AI key saved, say so, and which key the owner adds, rather
+    // than a "could not parse" the visitor cannot act on. It comes after the
+    // ownership check, which stays first (TOFU.md).
+    const provider = getLlmProvider();
+    if (!provider.isConfigured()) {
+      return NextResponse.json(
+        {
+          error: missingKeyMessage(provider.apiKeyEnvVar),
+          keyMissing: true,
+          variable: provider.apiKeyEnvVar,
+        },
+        { status: 503 },
+      );
     }
 
     const parsed = await aiParseSet(text, {

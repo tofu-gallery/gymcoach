@@ -105,6 +105,7 @@ export const session = {
     parseHelp:
       'Preenche os campos abaixo para você revisar; nunca registra uma série automaticamente.',
     parseError: 'Não foi possível interpretar. Tente o formato abreviado (ex.: 100x8@9).',
+    parseKeyMissing: 'Para ativar “Analisar com IA”, o proprietário deste GymCoach precisa adicionar {variable} às configurações do app, como valor oculto. O formato abreviado (ex.: 100x8@9) funciona mesmo assim.', // Tofu: the owner adds the key (TOFU.md)
     duration: 'Duração (mm:ss)',
     durationExample: 'ex.: 12:30 ou 12.30',
     durationError:
