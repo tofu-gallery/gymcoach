@@ -14,13 +14,13 @@ export const coach = {
     unknownError: 'Erreur inconnue',
     tooManyDebriefs: 'Vous avez demandé trop de débriefs. Réessayez plus tard.',
     keyMissing: 'Clé {provider} manquante',
-    keySetup: 'Définissez {variable} dans .env pour activer le coach.',
+    keySetup: 'Pour activer le coach, le propriétaire de ce GymCoach doit ajouter {variable} aux réglages de l’app, en valeur masquée.', // Tofu: the owner adds the key (TOFU.md)
     applied: 'Appliqué',
     debriefFrom: 'Débrief du {date}',
     weekOf: 'Semaine du {date}',
   },
   chat: {
-    apiKey: 'Définissez {variable} dans .env pour activer le chat.',
+    apiKey: 'Pour activer le chat, le propriétaire de ce GymCoach doit ajouter {variable} aux réglages de l’app, en valeur masquée.', // Tofu: the owner adds the key (TOFU.md)
     liveSession: 'Séance en cours attachée.',
     new: 'Nouveau',
     placeholder: 'Écrivez à votre coach...',

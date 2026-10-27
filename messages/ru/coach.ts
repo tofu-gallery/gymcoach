@@ -14,13 +14,13 @@ export const coach = {
     unknownError: 'Неизвестная ошибка',
     tooManyDebriefs: 'Вы запросили слишком много разборов. Попробуйте позже.',
     keyMissing: 'Не задан ключ {provider}',
-    keySetup: 'Укажите {variable} в файле .env, чтобы включить тренера.',
+    keySetup: 'Чтобы включить тренера, владелец этого GymCoach должен добавить {variable} в настройки приложения как скрытое значение.', // Tofu: the owner adds the key (TOFU.md)
     applied: 'Применено',
     debriefFrom: 'Разбор от {date}',
     weekOf: 'Неделя от {date}',
   },
   chat: {
-    apiKey: 'Укажите {variable} в файле .env, чтобы включить чат.',
+    apiKey: 'Чтобы включить чат, владелец этого GymCoach должен добавить {variable} в настройки приложения как скрытое значение.', // Tofu: the owner adds the key (TOFU.md)
     liveSession: 'Текущая тренировка прикреплена.',
     new: 'Новый',
     placeholder: 'Напишите тренеру...',
