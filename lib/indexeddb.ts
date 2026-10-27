@@ -55,6 +55,9 @@ export interface PendingSet {
 
   createdAt: number; // epoch ms
   status: PendingSetStatus;
+  // Tofu: only creates sent with a stable key can be retried safely after a
+  // page closes. Missing on older rows, whose lost reply could mean a save.
+  idempotentCreate?: boolean;
   // If synced: server id returned by the API. Allows reconciliation
   // with the UI state and avoids double-POST on retry.
   serverId: string | null;

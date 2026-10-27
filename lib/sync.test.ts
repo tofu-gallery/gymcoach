@@ -1,3 +1,4 @@
+// Tofu: interrupted keyed creates are recoverable without replaying unsafe legacy rows.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PendingSet } from '@/lib/indexeddb';
 
@@ -481,6 +482,10 @@ describe('per-account offline queue (#490)', () => {
             })),
           })),
         })),
+        delete: vi.fn(async (id: string) => {
+          const index = rows.findIndex((row) => row.localId === id);
+          if (index >= 0) rows.splice(index, 1);
+        }),
         // A copy, as Dexie returns: later updates do not reach a row already read.
         get: vi.fn(async (id: string) => {
           const row = rows.find((candidate) => candidate.localId === id);
@@ -511,6 +516,75 @@ describe('per-account offline queue (#490)', () => {
       { ...pendingSet(), localId: 'legacy', sessionId: 'session-a', userId: undefined, createdAt: 3 },
     ];
   }
+
+  it('sends the same browser key after an interrupted create is recovered', async () => {
+    const rows = [{ ...pendingSet(), status: 'syncing' as const, idempotentCreate: true }];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(created('stable-set'));
+    await flushPendingSets('user-1');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string)).toMatchObject({ clientId: 'local-1' });
+    expect(rows[0]).toMatchObject({ status: 'synced', serverId: 'stable-set' });
+  });
+
+  it('retries an interrupted keyed create at startup and on coming online', async () => {
+    const row: PendingSet = { ...pendingSet(), status: 'syncing', idempotentCreate: true };
+    const rows = [row];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => created('stable-set'));
+    const cleanup = bindAutoSync('user-1');
+    try {
+      await vi.waitFor(() => expect(row.status).toBe('synced'));
+      await flushPendingSets('user-1');
+      row.status = 'syncing';
+      row.serverId = null;
+      window.dispatchEvent(new Event('online'));
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      await flushPendingSets('user-1');
+      expect(row.status).toBe('synced');
+    } finally { cleanup(); }
+  });
+
+  it('reconciles a hydrated server copy after the create reply was lost', async () => {
+    const local: PendingSet = { ...pendingSet(), status: 'syncing', idempotentCreate: true };
+    const rows: PendingSet[] = [local, { ...local, localId: 'srv_stable-set', serverId: 'stable-set', status: 'synced' }];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => created('stable-set'));
+    await flushPendingSets('user-1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ localId: local.localId, serverId: 'stable-set', status: 'synced' });
+  });
+
+  it('keeps an edit pending when the idempotent retry returns the previously saved values', async () => {
+    const local: PendingSet = { ...pendingSet(), status: 'syncing', idempotentCreate: true, weight: 90 };
+    mockGetDB.mockReturnValue(rowsDB([local]));
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ id: 'stable-set', weight: 82.5, reps: 7, rir: 2 })));
+    await flushPendingSets('user-1');
+    expect(local).toMatchObject({ serverId: 'stable-set', weight: 90, status: 'pending' });
+  });
+
+  it('does not replay an old unkeyed create or another account\'s syncing row', async () => {
+    const rows: PendingSet[] = [
+      { ...pendingSet(), status: 'syncing' },
+      { ...pendingSet(), localId: 'theirs', userId: 'user-2', status: 'syncing', idempotentCreate: true },
+    ];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+    const fetchMock = vi.spyOn(globalThis, 'fetch');
+    await flushPendingSets('user-1');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(rows.map((row) => row.status)).toEqual(['syncing', 'syncing']);
+  });
+
+  it('marks a new create retryable before the request can be cut off', async () => {
+    const row = pendingSet();
+    mockGetDB.mockReturnValue(rowsDB([row]));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, options) => {
+      expect(row).toMatchObject({ status: 'syncing', idempotentCreate: true });
+      expect(JSON.parse(options?.body as string)).toMatchObject({ clientId: row.localId });
+      return created('stable-set');
+    });
+    expect(await flushPendingSets('user-1')).toMatchObject({ flushed: 1 });
+  });
 
   it("sends only the signed-in account's rows and counts only those as remaining", async () => {
     const rows = queue().filter((row) => row.localId !== 'legacy');

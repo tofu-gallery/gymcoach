@@ -1,6 +1,9 @@
+// Tofu: a browser's stable row key makes retries safe after a lost response.
+import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 import type { Exercise, Set } from '@/lib/prisma-client';
 import { db } from '@/lib/db';
+import { Prisma } from '@/prisma/generated/client';
 import { setInputSchema, validateSetForCategory } from '@/lib/schemas/set';
 import { ApiError, handleApiError, parseJsonBody, requireApiUserId } from '@/lib/api';
 import { setAchievesGoal } from '@/lib/goals';
@@ -24,11 +27,20 @@ export async function POST(req: Request, props: Params) {
     if (!session) {
       throw new ApiError(404, 'Session not found.');
     }
+    const data = await parseJsonBody(req, setInputSchema);
+    // The existing primary key supplies atomic uniqueness without a schema
+    // change. Include the account and session so callers cannot name or read
+    // another user's row. A 'c' prefix also satisfies existing cuid readers.
+    const retryId = data.clientId
+      ? `c${createHash('sha256').update(JSON.stringify([userId, params.id, data.clientId])).digest('hex')}`
+      : undefined;
+    if (retryId) {
+      const saved = await db.set.findFirst({ where: { id: retryId, sessionId: params.id } });
+      if (saved) return NextResponse.json(saved, { status: 201 });
+    }
     if (session.finishedAt) {
       throw new ApiError(400, 'Session already finished.');
     }
-
-    const data = await parseJsonBody(req, setInputSchema);
 
     // Validation: the exercise must belong to the user.
     const exercise = await db.exercise.findFirst({
@@ -72,6 +84,7 @@ export async function POST(req: Request, props: Params) {
       });
       return tx.set.create({
         data: {
+          ...(retryId ? { id: retryId } : {}),
           sessionId: params.id,
           exerciseId: data.exerciseId,
           ...equipmentSnapshot,
@@ -91,6 +104,14 @@ export async function POST(req: Request, props: Params) {
           block,
         },
       });
+    }).catch(async (err: unknown) => {
+      // Two tabs may retry together. The loser reads the committed winner
+      // outside the rolled-back transaction; it never overwrites its values.
+      if (retryId && err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        const saved = await db.set.findFirst({ where: { id: retryId, sessionId: params.id } });
+        if (saved) return saved;
+      }
+      throw err;
     });
     // Best-effort: the set is already committed, so a failure here must never
     // fail the request (a 500 would make the offline sync retry the POST and

@@ -67,27 +67,37 @@ function sendableBy(row: PendingSet, userId: string): boolean {
   return row.userId === userId || row.userId === undefined;
 }
 
+// Tofu: a create sent with a stable browser key can be recovered after its
+// tab closed. Older, unkeyed syncing rows remain untouched: replaying them
+// could insert a second set. A live same-tab flush is still joined below.
+function recoverableCreate(row: PendingSet): boolean {
+  return row.status === 'syncing' && row.idempotentCreate === true && row.serverId == null;
+}
+
 // Rows the flush may send for `userId`, oldest first.
 async function queuedRowsOf(userId: string): Promise<PendingSet[]> {
   const rows = await getDB()
     .pendingSets.where('status')
-    .anyOf(['pending', 'failed'])
+    .anyOf(['pending', 'failed', 'syncing'])
     .sortBy('createdAt');
-  return rows.filter((row) => sendableBy(row, userId));
+  return rows.filter((row) => sendableBy(row, userId) &&
+    (row.status !== 'syncing' || recoverableCreate(row)));
 }
 
-// Marks a queued row `syncing` for this flush, unless it is no longer queued
-// (another tab's flush claimed it) or now belongs to another account. Read and
-// write share one `rw` transaction, which IndexedDB runs one at a time per
-// store, so two flushes, in this tab or another, never send the same row.
+// Claims a queued row or recovers a keyed create interrupted by a closed tab.
+// Read and write share one rw transaction. Another tab may also retry a keyed
+// create; the API's stable primary key makes those two requests one set.
 // Returns the row as claimed, or null to skip it.
 async function claimRow(localId: string, userId: string): Promise<PendingSet | null> {
   const db = getDB();
   return db.transaction('rw', db.pendingSets, async () => {
     const row = await db.pendingSets.get(localId);
-    if (!row || (row.status !== 'pending' && row.status !== 'failed')) return null;
+    if (!row || (row.status !== 'pending' && row.status !== 'failed' && !recoverableCreate(row))) return null;
     if (!sendableBy(row, userId)) return null;
-    await db.pendingSets.update(localId, { status: 'syncing' });
+    await db.pendingSets.update(localId, {
+      status: 'syncing',
+      ...(row.serverId == null ? { idempotentCreate: true } : {}),
+    });
     return row;
   });
 }
@@ -161,6 +171,7 @@ async function doFlush(userId: string): Promise<FlushResult> {
         });
       } else {
         const payload = {
+          clientId: item.localId,
           exerciseId: item.exerciseId,
           gymEquipmentId: item.gymEquipmentId ?? null,
           setNumber: item.setNumber,
@@ -213,7 +224,10 @@ async function doFlush(userId: string): Promise<FlushResult> {
         continue;
       }
 
-      const saved = (await res.json()) as { id: string; gymEquipmentId?: string | null };
+      const saved = (await res.json()) as {
+        id: string; gymEquipmentId?: string | null;
+        weight?: number; reps?: number; rir?: number | null;
+      };
       // Equipment metadata only applies when creating a new set. Editing an
       // existing row preserves the equipment reference already stored server-side.
       const equipmentDropped =
@@ -240,17 +254,33 @@ async function doFlush(userId: string): Promise<FlushResult> {
           );
         });
       } else {
-        await db.pendingSets.update(item.localId, {
-          status: 'synced',
-          serverId: saved.id,
-          syncedAt: Date.now(),
-          lastError: null,
-          ...owner,
-          // Written before the broadcast below, so a listener that drains
-          // immediately still finds the record it is being told about.
-          ...(equipmentDropped
-            ? { gymEquipmentId: null, equipmentDroppedNotice: sentEquipmentId }
-            : {}),
+        await db.transaction('rw', db.pendingSets, async () => {
+          const latest = await db.pendingSets.get(item.localId);
+          if (!latest) return;
+          // A lost reply can let hydration add the server copy before we learn
+          // its id. Remove that synced copy in the same transaction.
+          const serverCopyId = `srv_${saved.id}`;
+          const serverCopy = await db.pendingSets.get(serverCopyId);
+          if (serverCopy && serverCopy.localId !== item.localId && serverCopy.status === 'synced' &&
+              serverCopy.sessionId === item.sessionId && sendableBy(serverCopy, userId)) {
+            await db.pendingSets.delete(serverCopyId);
+          }
+          // The idempotent response may describe the first send, before a
+          // later local edit. Keep the edit queued as a PATCH to the known id.
+          const current = latest.weight === (saved.weight ?? sentPatch.weight) &&
+            latest.reps === (saved.reps ?? sentPatch.reps) &&
+            latest.rir === (saved.rir === undefined ? sentPatch.rir : saved.rir);
+          await db.pendingSets.update(item.localId, {
+            status: current ? 'synced' : 'pending',
+            serverId: saved.id,
+            syncedAt: current ? Date.now() : null,
+            lastError: null,
+            ...owner,
+            // Written before broadcasting so a mounted runner can drain it.
+            ...(equipmentDropped
+              ? { gymEquipmentId: null, equipmentDroppedNotice: sentEquipmentId }
+              : {}),
+          });
         });
       }
       if (equipmentDropped && sentEquipmentId !== null) {

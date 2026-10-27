@@ -11,6 +11,8 @@ import {
 import { MAX_EXERCISE_BLOCK } from '@/lib/exercise-blocks';
 
 export const setInputSchema = z.object({
+  // Tofu: stable browser row key for retrying a create after its reply was lost.
+  clientId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
   exerciseId: z.string().min(1),
   gymEquipmentId: z.string().min(1).nullable().optional(),
   setNumber: z.coerce.number().int().min(1).max(50),
