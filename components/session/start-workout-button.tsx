@@ -22,18 +22,23 @@ export function StartWorkoutButton({
 
   function handleStart() {
     startTransition(async () => {
-      const res = await fetch('/api/sessions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workoutId, gymId }),
-      });
-      if (!res.ok) {
+      // Tofu: a dropped connection is a normal failed start, not a page error.
+      try {
+        const res = await fetch('/api/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workoutId, gymId }),
+        });
+        if (!res.ok) {
+          toast.error(t('startError'));
+          return;
+        }
+        const session = (await res.json()) as { id: string };
+        router.push(`/session/${session.id}`);
+        router.refresh();
+      } catch {
         toast.error(t('startError'));
-        return;
       }
-      const session = (await res.json()) as { id: string };
-      router.push(`/session/${session.id}`);
-      router.refresh();
     });
   }
 
