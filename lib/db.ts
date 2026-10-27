@@ -1,5 +1,8 @@
+// Tofu: the adapter takes its pool settings from lib/tofu-database.ts, which
+// verifies a Tofu database's certificate (SUPABASE_CA_CERT); see TOFU.md.
 import { PrismaClient } from '@/prisma/generated/client';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { databasePoolConfig } from '@/lib/tofu-database';
 
 // Singleton pattern recommended by Prisma in dev (avoids
 // multiple connections on Next.js hot-reload).
@@ -14,7 +17,7 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 function createClient(): PrismaClient {
-  const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+  const adapter = new PrismaPg(databasePoolConfig());
   return new PrismaClient({
     adapter,
     log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],
