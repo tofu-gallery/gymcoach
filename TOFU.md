@@ -10,7 +10,7 @@ Upstream: <https://github.com/gymcoach-app/gymcoach>, commit `91d70e44bcacdc6bee
 
 ## What it is
 
-A workout log made for phones. You log your sets in the gym (it keeps working without a signal and catches up when you are back online), follow a training plan, see your history on a calendar, and watch your lifts, weekly volume and bodyweight in charts. It imports exports from Strong, Hevy and its own CSV, and TCX, GPX and FIT files from watches. It keeps progress photos, and has an AI coach and chat that work once the owner adds their own AI key. Each account sees only its own training.
+A workout log made for phones. You log your sets in the gym (start the workout with signal: if the signal then drops, the sets you log while the workout screen stays open are kept on the phone and sent once the app is open with signal again, with the limits listed below), follow a training plan, see your history on a calendar, and watch your lifts, weekly volume and bodyweight in charts. It imports exports from Strong, Hevy and its own CSV, and TCX, GPX and FIT files from watches. It keeps progress photos, and has an AI coach and chat that work once the owner adds their own AI key. Each account sees only its own training.
 
 ## How Tofu runs it
 
@@ -47,7 +47,14 @@ The rest of upstream's CI, Docker and agent files stays as it is (`.github/workf
 
 ## What works differently on Tofu
 
-- **Offline logging** works as upstream: the page and the sets you log are kept in the browser, and sent when the phone is back online. A copy that was just deployed again may need one reload before the newest version shows.
+- **Offline logging works only in part.** This is upstream's own code, which Tofu has not changed; what it does was measured in a real browser (below). What works: once a workout was started with signal, the sets you log after the signal drops are taken while the workout screen stays open, kept on the phone (the header says "Offline · 2 pending"), and sent when the app is open with signal again. What does not:
+  - Starting a workout with no signal starts nothing and turns the page into a blank "Application error" message.
+  - Reloading or reopening the workout with no signal, or closing the app, shows the phone's own "This site can't be reached" until the signal is back; the sets already logged stay on the phone. Other screens, such as History, do not open with no signal either.
+  - Nothing is sent while the app is closed.
+  - A set whose send is cut off, for example by a reload, can stay "syncing" for good: the app never sends it again, and it never reaches History or the chart.
+  - Once sets are sent, opening the workout again lists each set twice, and the summary before you finish counts them twice, even when the signal never dropped. The saved workout, History and the chart count each set once.
+
+  A copy that was just deployed again may need one reload before the newest version shows.
 - **No email and no reminders.** GymCoach sends no email and no notifications, on Tofu or anywhere: there is no "forgot password". Someone who forgets their password cannot reset it in the app. The rest timer runs in the open page.
 - **Photos** live in the copy's database and count toward its size. Shrunk in the browser, one is usually 150 to 500 KB.
 - **Limits on sign-in attempts and imports** are kept in each server process's memory, and Tofu runs several processes, so they are looser than on a single server.
@@ -106,3 +113,14 @@ A deploy of `pin/2026-10-27.1` on Tofu went through, but its answer carried thre
 - The build did not change: `pin/2026-10-27.1` and this branch, built one after the other in the same folder, give the same route table and the same 257 JavaScript files (chunks, pages, routes, the service worker) byte for byte once the build's random id is set aside. The only other differences are in 85 of Next.js's manifests, which hold the same data with their keys in another order; a second build of this branch differs from the first in the same way, and in the service worker.
 - A new scratch database made by the 30 files in `supabase/migrations/`, each in its own transaction over a role that is not a superuser: 22 tables, all with row-level security on, none forced. `next start` against it with no AI key and `JWT_SECRET` unset: the live check passed its 28 checks, as before.
 - Tofu's own check on `tofu` with the two removals (`2742d54`): safety ok with 0 findings, so a copy's deploy answer carries no note from it; 999 files, and still not a site the Free plan's static hosting takes (server code; 905 files to publish, past its 500).
+
+### Offline test (2026-10-27): what works without a signal
+
+A test in a real browser of `pin/2026-10-27.2`, against 127.0.0.1 only, nothing deployed: `npm ci` and `npm run build`, which writes the service worker (`public/sw.js`, which downloads 294 files, about 13 MB, on the first visit), then `next start` with `NODE_ENV=production` and `JWT_SECRET` unset, against a scratch PostgreSQL 14 that only takes TLS, with the 30 files in `supabase/migrations/` applied. Headless Chromium at a desktop size, the connection cut with the browser's own offline switch, an account made on the sign-up page, two runs (a test script kept outside this repository).
+
+- Starting a workout with no signal: nothing started, and the page became a blank "Application error: a client-side exception has occurred". With signal, the workout opened.
+- With the workout open and the service worker in control, two sets logged with no signal were both shown, the header said "Offline · 2 pending", and the server had received none.
+- A reload with no signal failed (the browser's own error page), and History did not open: the workout page had been opened from inside the app, and the service worker keeps only pages that were loaded in full.
+- Back online, the sets reached the server within 2 seconds while the app was open; with the app closed, nothing was sent until it was opened again with signal.
+- In the second run, the reload cut one set's send off: that set stayed "syncing", was never sent again, and was missing from History and the chart.
+- Opening the workout again showed every sent set twice (4 rows for 2 sets), also for a set logged with no drop at all. History and the chart counted each set once.
