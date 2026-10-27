@@ -10,12 +10,43 @@ import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
 export const SESSION_COOKIE = 'gymcoach-session';
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
-function getSecret(): Uint8Array {
+// Tofu: when JWT_SECRET is unset, the signing key is derived from DATABASE_URL
+// (see TOFU.md), so a copy that only has its database's settings still signs
+// sessions with a key nobody else knows. The derivation uses Web Crypto, which
+// the Edge runtime (this file runs in middleware) and Node share, so both give
+// the same key. A JWT_SECRET that is set is used as before.
+const DERIVED_SECRET_LABEL = 'gymcoach session signing key v1';
+let derivedSecret: { from: string; key: Promise<Uint8Array> } | undefined;
+
+async function deriveSecret(databaseUrl: string): Promise<Uint8Array> {
+  const encoder = new TextEncoder();
+  const key = await globalThis.crypto.subtle.importKey(
+    'raw',
+    encoder.encode(databaseUrl),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const mac = await globalThis.crypto.subtle.sign('HMAC', key, encoder.encode(DERIVED_SECRET_LABEL));
+  return new Uint8Array(mac);
+}
+
+async function getSecret(): Promise<Uint8Array> {
   const secret = process.env.JWT_SECRET;
-  if (!secret || secret.length < 32) {
+  if (secret) {
+    if (secret.length < 32) {
+      throw new Error('JWT_SECRET missing or too short (min 32 chars).');
+    }
+    return new TextEncoder().encode(secret);
+  }
+  const databaseUrl = process.env.DATABASE_URL?.trim();
+  if (!databaseUrl) {
     throw new Error('JWT_SECRET missing or too short (min 32 chars).');
   }
-  return new TextEncoder().encode(secret);
+  if (derivedSecret?.from !== databaseUrl) {
+    derivedSecret = { from: databaseUrl, key: deriveSecret(databaseUrl) };
+  }
+  return derivedSecret.key;
 }
 
 export interface SessionClaims extends JWTPayload {
@@ -28,12 +59,12 @@ export async function signSession(claims: { userId: string; email: string }): Pr
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
-    .sign(getSecret());
+    .sign(await getSecret());
 }
 
 export async function verifySession(token: string): Promise<SessionClaims | null> {
   try {
-    const { payload } = await jwtVerify(token, getSecret());
+    const { payload } = await jwtVerify(token, await getSecret());
     if (typeof payload.userId !== 'string' || typeof payload.email !== 'string') {
       return null;
     }
