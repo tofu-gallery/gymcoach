@@ -5,6 +5,8 @@
 const withPWA = require('@ducanh2912/next-pwa').default({
   dest: 'public',
   register: true,
+  // Tofu: sync resumes on online; reloading here can cut its request off.
+  reloadOnOnline: false,
   // Disabled in dev to avoid aggressive caching during hot-reload.
   disable: process.env.NODE_ENV === 'development',
   workboxOptions: {
