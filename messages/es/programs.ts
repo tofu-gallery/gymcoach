@@ -145,5 +145,6 @@ export const programs = {
     saveError: 'No se pudo guardar el programa generado.',
     removeWorkout: 'Quitar entrenamiento',
     removeExercise: 'Quitar ejercicio',
+    keySetup: 'Para activar el generador de programas, el propietario de este GymCoach debe añadir {variable} a los ajustes de la app, como valor oculto.', // Tofu: the owner adds the key (TOFU.md)
   },
 } satisfies MessageShape<typeof english>;

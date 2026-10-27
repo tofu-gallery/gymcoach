@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
-import { Loader2, Sparkles, Trash2, Wand2 } from 'lucide-react';
+import { AlertTriangle, Loader2, Sparkles, Trash2, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { GeneratedProgram } from '@/lib/schemas/program-generation';
 import { Button } from '@/components/ui/button';
@@ -23,9 +23,20 @@ import { muscleGroupMessageKeys } from '@/i18n/enum-keys';
 
 type Draft = GeneratedProgram;
 
-export function ProgramGenerator() {
+// Tofu: hasApiKey, providerLabel and apiKeyEnvVar come from the page, which
+// asks the active provider, as the coach page does (TOFU.md).
+export function ProgramGenerator({
+  hasApiKey,
+  providerLabel,
+  apiKeyEnvVar,
+}: {
+  hasApiKey: boolean;
+  providerLabel: string;
+  apiKeyEnvVar: string;
+}) {
   const t = useTranslations('programs');
   const common = useTranslations('common');
+  const coachT = useTranslations('coach');
   const exerciseT = useTranslations('exercises');
   const router = useRouter();
   const [goal, setGoal] = useState('');
@@ -127,6 +138,22 @@ export function ProgramGenerator() {
 
   return (
     <div className="flex flex-col gap-6">
+      {!hasApiKey && (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardContent className="flex items-start gap-3 py-4 text-sm">
+            <AlertTriangle className="size-5 shrink-0 text-amber-600" />
+            <div>
+              <p className="font-medium text-amber-900 dark:text-amber-100">
+                {coachT('client.keyMissing', { provider: providerLabel })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t('generator.keySetup', { variable: apiKeyEnvVar })}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
@@ -141,12 +168,13 @@ export function ProgramGenerator() {
             onChange={(e) => setGoal(e.target.value)}
             rows={4}
             placeholder={t('generator.placeholder')}
+            disabled={!hasApiKey}
           />
           <div>
             <Button
               type="button"
               onClick={generate}
-              disabled={generating || goal.trim().length < 10}
+              disabled={!hasApiKey || generating || goal.trim().length < 10}
               className="min-h-tap"
             >
               {generating ? (

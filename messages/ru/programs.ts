@@ -144,5 +144,6 @@ export const programs = {
     saveError: 'Не удалось сохранить сгенерированную программу.',
     removeWorkout: 'Удалить тренировку',
     removeExercise: 'Удалить упражнение',
+    keySetup: 'Чтобы включить генератор программ, владелец этого GymCoach должен добавить {variable} в настройки приложения как скрытое значение.', // Tofu: the owner adds the key (TOFU.md)
   },
 } satisfies MessageShape<typeof english>;
