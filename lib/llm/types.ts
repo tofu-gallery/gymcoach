@@ -49,3 +49,10 @@ export interface LlmProvider {
   // Streams text deltas as they arrive. Same request shape as complete().
   stream(req: LlmCompletionRequest): AsyncIterable<string>;
 }
+
+// Tofu: what an AI request answers while no key is saved. Pages that show the
+// server's error as it is then tell the visitor who adds the key and where,
+// instead of naming a bare variable (TOFU.md).
+export function missingKeyMessage(variable: string): string {
+  return `The owner of this GymCoach turns on the AI features by adding ${variable} to the app's settings, as a hidden value.`;
+}

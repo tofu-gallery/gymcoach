@@ -92,6 +92,16 @@ describe('AnthropicProvider', () => {
     ).rejects.toMatchObject({ status: 503 });
   });
 
+  // Tofu: the missing-key answer says who adds the key and where (TOFU.md).
+  it('names the owner and the key when the key is missing', async () => {
+    const p = new AnthropicProvider();
+    await expect(
+      p.complete({ system: 'S', messages: [{ role: 'user', content: 'hi' }] }),
+    ).rejects.toThrow(
+      /^The owner of this GymCoach turns on the AI features by adding ANTHROPIC_API_KEY to the app's settings, as a hidden value\.$/,
+    );
+  });
+
   it('uses the default model and overrides via ANTHROPIC_MODEL', () => {
     expect(new AnthropicProvider().model).toBe('claude-opus-4-7');
     process.env.ANTHROPIC_MODEL = 'claude-haiku-4-5';

@@ -1,5 +1,6 @@
 import {
   LlmError,
+  missingKeyMessage,
   type LlmCompletionRequest,
   type LlmCompletionResult,
   type LlmProvider,
@@ -101,7 +102,7 @@ export class CodexLbProvider implements LlmProvider {
 
   private async request(req: LlmCompletionRequest, stream: boolean): Promise<Response> {
     if (!this.apiKey) {
-      throw new LlmError(503, 'CODEX_LB_API_KEY is not configured.');
+      throw new LlmError(503, missingKeyMessage(this.apiKeyEnvVar)); // Tofu: who adds the key (TOFU.md)
     }
 
     const controller = new AbortController();

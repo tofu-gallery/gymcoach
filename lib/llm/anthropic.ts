@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import {
   LlmError,
+  missingKeyMessage,
   type LlmCompletionRequest,
   type LlmCompletionResult,
   type LlmProvider,
@@ -30,7 +31,7 @@ export class AnthropicProvider implements LlmProvider {
 
   async complete(req: LlmCompletionRequest): Promise<LlmCompletionResult> {
     if (!this.apiKey) {
-      throw new LlmError(503, 'ANTHROPIC_API_KEY is not configured.');
+      throw new LlmError(503, missingKeyMessage(this.apiKeyEnvVar)); // Tofu: who adds the key (TOFU.md)
     }
     this.client ??= new Anthropic({ apiKey: this.apiKey });
 
@@ -73,7 +74,7 @@ export class AnthropicProvider implements LlmProvider {
 
   async *stream(req: LlmCompletionRequest): AsyncIterable<string> {
     if (!this.apiKey) {
-      throw new LlmError(503, 'ANTHROPIC_API_KEY is not configured.');
+      throw new LlmError(503, missingKeyMessage(this.apiKeyEnvVar)); // Tofu: who adds the key (TOFU.md)
     }
     this.client ??= new Anthropic({ apiKey: this.apiKey });
 
