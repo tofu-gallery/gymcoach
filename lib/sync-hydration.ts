@@ -1,6 +1,11 @@
 // Hydrates IndexedDB with the sets fetched from the server.
 // Tofu: reconcile by serverId as well as localId, so a locally logged set
 // and its server snapshot are one row. Preserve unsent edits while hydrating.
+// This also covers upstream's fix for #541 (a remount of the session runner,
+// such as a language switch mid-workout, duplicated every logged set) in
+// Tofu's way: the set keeps its original local row instead of being replaced
+// by a srv_ row, a queued edit is never shown beside an older server copy,
+// and the kept row keeps its equipmentDroppedNotice (#337) (see TOFU.md).
 //
 // Strategy: on every SessionRunner mount, we call hydrate with the
 // server-side sets. IndexedDB thus becomes the single source of truth
@@ -66,6 +71,8 @@ export async function hydrateFromServerSets(
         if (!local.some((row) => row.localId === record.localId)) reconciled.push(record);
         continue;
       }
+      // A synced row takes the server's values but keeps its own fields that
+      // the server does not send, such as equipmentDroppedNotice (#337).
       reconciled.push(existing.status === 'synced'
         ? { ...existing, ...record, localId: existing.localId }
         : { ...existing, userId });

@@ -12,35 +12,57 @@ vi.mock('@/lib/indexeddb', async (importOriginal) => {
 
 import { hydrateFromServerSets } from '@/lib/sync-hydration';
 
-// The rows behind `bulkPut` and `where('sessionId').equals(...).modify(...)`,
-// the two calls the hydration makes, keyed by localId like the real table.
+// The rows behind `bulkPut`, `bulkDelete`, `where('sessionId').equals(...)`
+// with `.toArray()` or `.modify(...)`, and `.filter(...).toArray()/.delete()`,
+// keyed by localId like the real table. Tofu: `.filter(...)` is upstream's
+// (#541); Tofu's reconciliation does not call it, and it stays so this mock
+// keeps upstream's shape.
 function rowsDB(rows: PendingSet[]) {
   const pendingSets = {
-      bulkPut: vi.fn(async (records: PendingSet[]) => {
-        for (const record of records) {
-          const at = rows.findIndex((row) => row.localId === record.localId);
-          if (at >= 0) rows[at] = record;
-          else rows.push(record);
-        }
-      }),
-      bulkDelete: vi.fn(async (ids: string[]) => {
-        for (let i = rows.length - 1; i >= 0; i -= 1) {
-          if (ids.includes(rows[i]!.localId)) rows.splice(i, 1);
-        }
-      }),
-      where: vi.fn((index: string) => ({
-        equals: vi.fn((value: string) => ({
-          toArray: vi.fn(async () => rows.filter((row) => row[index as keyof PendingSet] === value)),
-          modify: vi.fn(async (change: (row: PendingSet) => void) => {
-            const matching = rows.filter((row) => row[index as keyof PendingSet] === value);
-            for (const row of matching) change(row);
-            return matching.length;
+    bulkPut: vi.fn(async (records: PendingSet[]) => {
+      for (const record of records) {
+        const at = rows.findIndex((row) => row.localId === record.localId);
+        if (at >= 0) rows[at] = record;
+        else rows.push(record);
+      }
+    }),
+    bulkDelete: vi.fn(async (ids: string[]) => {
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        if (ids.includes(rows[i]!.localId)) rows.splice(i, 1);
+      }
+    }),
+    where: vi.fn((index: string) => ({
+      equals: vi.fn((value: string) => ({
+        toArray: vi.fn(async () => rows.filter((row) => row[index as keyof PendingSet] === value)),
+        modify: vi.fn(async (change: (row: PendingSet) => void) => {
+          const matching = rows.filter((row) => row[index as keyof PendingSet] === value);
+          for (const row of matching) change(row);
+          return matching.length;
+        }),
+        filter: vi.fn((predicate: (row: PendingSet) => boolean) => ({
+          delete: vi.fn(async () => {
+            const toDelete = rows.filter(
+              (row) => row[index as keyof PendingSet] === value && predicate(row),
+            );
+            for (const row of toDelete) {
+              const idx = rows.indexOf(row);
+              if (idx >= 0) rows.splice(idx, 1);
+            }
+            return toDelete.length;
+          }),
+          toArray: vi.fn(async () => {
+            return rows.filter(
+              (row) => row[index as keyof PendingSet] === value && predicate(row),
+            );
           }),
         })),
       })),
+    })),
   };
+
   return {
     pendingSets,
+    // In the mock, just run the body directly (no real transaction isolation).
     transaction: vi.fn(<T>(_mode: string, _scope: unknown, body: () => Promise<T>) => body()),
   };
 }
@@ -148,5 +170,125 @@ describe('hydrateFromServerSets ownership (#490)', () => {
     await hydrateFromServerSets('session-a', [], 'user-a');
 
     expect(rows[0]?.userId).toBe('user-b');
+  });
+
+  // Tofu: upstream's three #541 scenarios below are kept, with Tofu's outcome:
+  // the set keeps its original local row (upstream replaced it with srv_), and
+  // a queued edit is the only row (upstream added the older server copy beside
+  // it, which listed the set twice). See lib/sync-hydration.ts and TOFU.md.
+  it('keeps a synced local set as one row under its own id (no duplicates on reload)', async () => {
+    // Simulates: user logs a set (generated localId), it syncs (gets serverId),
+    // then page reloads (language switch). Without deduplication, hydration would
+    // create a second row with localId srv_${serverId}, duplicating the set.
+    const localRow: PendingSet = {
+      localId: 'local_generated_123',
+      sessionId: 'session-a',
+      userId: 'user-a',
+      exerciseId: 'bench',
+      setNumber: 1,
+      weight: 60,
+      reps: 5,
+      rir: 2,
+      durationSec: null,
+      distanceM: null,
+      notes: null,
+      isWarmup: false,
+      isDropSet: false,
+      block: null,
+      createdAt: 1,
+      status: 'synced',
+      serverId: 'set-1', // Already synced, has a serverId
+      syncedAt: 2,
+      attempts: 0,
+      lastError: null,
+    };
+    const rows = [localRow];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+
+    await hydrateFromServerSets('session-a', [serverSet], 'user-a');
+
+    // One row: the original local_generated_123, now holding the server's copy
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.localId).toBe('local_generated_123');
+    expect(rows[0]?.serverId).toBe('set-1');
+    expect(rows[0]?.status).toBe('synced');
+  });
+
+  it('preserves a pending row with unsaved edits as the only row during hydration', async () => {
+    // Simulates: user logs a set, it syncs, user edits it (status='pending'),
+    // then page reloads BEFORE the edit syncs. The pending edit must not be lost.
+    const pendingEditRow: PendingSet = {
+      localId: 'local_generated_123',
+      sessionId: 'session-a',
+      userId: 'user-a',
+      exerciseId: 'bench',
+      setNumber: 1,
+      weight: 100, // Edited value (server has 60)
+      reps: 5,
+      rir: 2,
+      durationSec: null,
+      distanceM: null,
+      notes: null,
+      isWarmup: false,
+      isDropSet: false,
+      block: null,
+      createdAt: 1,
+      status: 'pending', // Unsaved edit
+      serverId: 'set-1',
+      syncedAt: 2,
+      attempts: 0,
+      lastError: null,
+    };
+    const rows = [pendingEditRow];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+
+    await hydrateFromServerSets('session-a', [serverSet], 'user-a');
+
+    // Only the pending edit: no older server copy is listed beside it
+    expect(rows).toHaveLength(1);
+    const localRow = rows.find((r) => r.localId === 'local_generated_123');
+    expect(localRow).toBeDefined();
+    expect(localRow?.status).toBe('pending');
+    expect(localRow?.weight).toBe(100); // Pending edit preserved
+    expect(rows.find((r) => r.localId === 'srv_set-1')).toBeUndefined();
+  });
+
+  it('preserves equipmentDroppedNotice on the synced row it keeps (#337)', async () => {
+    // Simulates: user logs a set with equipment, it syncs, server drops the
+    // equipment (machine was deleted/unlinked) and writes equipmentDroppedNotice,
+    // then page reloads. The notice must stay on the row hydration keeps so the
+    // runner can show "machine was not recorded".
+    const syncedRowWithNotice: PendingSet = {
+      localId: 'local_generated_123',
+      sessionId: 'session-a',
+      userId: 'user-a',
+      exerciseId: 'bench',
+      setNumber: 1,
+      weight: 60,
+      reps: 5,
+      rir: 2,
+      durationSec: null,
+      distanceM: null,
+      notes: null,
+      isWarmup: false,
+      isDropSet: false,
+      block: null,
+      createdAt: 1,
+      status: 'synced',
+      serverId: 'set-1',
+      syncedAt: 2,
+      attempts: 0,
+      lastError: null,
+      equipmentDroppedNotice: 'eq-123', // Notice from server refusing the equipment
+    };
+    const rows = [syncedRowWithNotice];
+    mockGetDB.mockReturnValue(rowsDB(rows));
+
+    await hydrateFromServerSets('session-a', [serverSet], 'user-a');
+
+    // The kept row should have the equipmentDroppedNotice preserved
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.localId).toBe('local_generated_123');
+    expect(rows[0]?.equipmentDroppedNotice).toBe('eq-123');
   });
 });
